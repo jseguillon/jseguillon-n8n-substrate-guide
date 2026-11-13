@@ -9,7 +9,7 @@ ActorTemplate, and the native n8n Substrate client.
 | Image | Digest-pinned reference | Platform |
 | --- | --- | --- |
 | n8n 2.48.0 with native Substrate support and rollout gate | `ghcr.io/jseguillon/n8n@sha256:49fba456eb975efcf775bd91a6f42f0bdf62689a705a7f5e19537bc51f10367d` | linux/amd64 |
-| n8n sandbox daemon | `ghcr.io/jseguillon/n8n-sandbox-service-substrate@sha256:cebff6b880c6a1623ed487b5870e36c8979f0b6bdca10bb9af2ecdb8288f3c63` | linux/amd64 |
+| n8n sandbox daemon | `ghcr.io/jseguillon/n8n-sandbox-service-substrate@sha256:223704e6e7b453a6e4473009186fa08b47965858a013d7f063d67f5c33e6b90d` | linux/amd64 |
 | Substrate gVisor worker v1.0.0 | `ghcr.io/agent-substrate/substrate/ateworker-gvisor:v1.0.0@sha256:f8987236c6256f58c4b2625e543b43f4ae4bdded6ee6821c03d966effb7c0f17` | linux/amd64, linux/arm64 |
 
 The custom n8n and sandbox images currently have linux/amd64 builds. Schedule
@@ -177,7 +177,7 @@ See the [Substrate authentication guide](https://github.com/agent-substrate/subs
 
 ```sh
 export SUBSTRATE_WORKER_IMAGE='ghcr.io/agent-substrate/substrate/ateworker-gvisor:v1.0.0@sha256:f8987236c6256f58c4b2625e543b43f4ae4bdded6ee6821c03d966effb7c0f17'
-export SUBSTRATE_SANDBOX_IMAGE='ghcr.io/jseguillon/n8n-sandbox-service-substrate@sha256:cfb59a6a2bcea0d185ffa2f5f52ee572c548b996979886d6246d557f4089ecd4'
+export SUBSTRATE_SANDBOX_IMAGE='ghcr.io/jseguillon/n8n-sandbox-service-substrate@sha256:223704e6e7b453a6e4473009186fa08b47965858a013d7f063d67f5c33e6b90d'
 
 cd ../n8n-sandbox-service-substrate
 envsubst '${SUBSTRATE_WORKER_IMAGE}' < substrate/worker-pool.yaml.tmpl \
