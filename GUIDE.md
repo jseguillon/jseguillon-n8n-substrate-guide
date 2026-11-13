@@ -42,7 +42,7 @@ router certificate.
 
 ```sh
 git clone --branch v1.0.0 https://github.com/agent-substrate/substrate.git
-git clone --branch feat/substrate-sandbox \
+git clone --branch feat/substrate-sandbox-build \
   https://github.com/jseguillon/n8n-sandbox-service-substrate.git
 ```
 
@@ -329,29 +329,11 @@ cleanup and Actor retention. For a manual synchronous snapshot:
 kubectl ate suspend actor <actor-name> -a n8n-sandboxes --mode=sync
 ```
 
-Use a v1.0.0 `kubectl-ate` binary with this deployment. An older CLI calls
-`ateapi.Control` instead of `substrate.ateapi.v1.Control` and fails with
-`Unimplemented: unknown service ateapi.Control`. Inspect an Actor's effective
-policy with:
-
-```sh
-kubectl ate get egress-policy <actor-name> -a n8n-sandboxes -o yaml
-```
-
-## Inspect Actors and policies
-
-Install the `kubectl-ate` v1.0.0 binary from the Agent Substrate release. Use
-your configured kubeconfig and context:
-
-```sh
-kubectl ate --kubeconfig "$KUBECONFIG" --context "$CONTEXT" \
-  get actors -a n8n-sandboxes
-kubectl ate --kubeconfig "$KUBECONFIG" --context "$CONTEXT" \
-  get egress-policy <actor-name> -a n8n-sandboxes -o yaml
-```
-
-The egress policy applies to one Actor. n8n copies the configured default to
-Actors that do not have an existing policy.
+Use a v1.0.0 `kubectl-ate` binary from the Agent Substrate release. An older CLI
+calls `ateapi.Control` instead of `substrate.ateapi.v1.Control` and fails with
+`Unimplemented: unknown service ateapi.Control`. The egress policy applies to
+one Actor. n8n copies the configured default to Actors that do not have an
+existing policy.
 
 ### Identity and router notes
 
