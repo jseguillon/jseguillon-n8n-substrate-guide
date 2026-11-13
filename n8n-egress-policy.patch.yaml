@@ -1,0 +1,16 @@
+spec:
+  template:
+    spec:
+      containers:
+        - name: n8n
+          env:
+            - name: SUBSTRATE_EGRESS_POLICY_FILE
+              value: /run/substrate-egress/default.json
+          volumeMounts:
+            - name: substrate-default-egress
+              mountPath: /run/substrate-egress
+              readOnly: true
+      volumes:
+        - name: substrate-default-egress
+          configMap:
+            name: n8n-substrate-default-egress
