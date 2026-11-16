@@ -40,7 +40,15 @@ router certificate.
 
 ## 1. Get the deployment files
 
+Start in an empty working directory. Keep all three repositories side by side.
+Pin the Kubernetes context for the entire procedure, including `kubectl ate`:
+
 ```sh
+export KUBECTL_CONTEXT='<remote-context>'
+kubectl config use-context "$KUBECTL_CONTEXT"
+git clone --branch docs/substrate-default-egress \
+  https://github.com/jseguillon/jseguillon-n8n-substrate-guide.git
+export GUIDE_DIR="$PWD/jseguillon-n8n-substrate-guide"
 git clone --branch v1.0.0 https://github.com/agent-substrate/substrate.git
 git clone --branch feat/substrate-sandbox-build \
   https://github.com/jseguillon/n8n-sandbox-service-substrate.git
@@ -60,6 +68,19 @@ The patch keeps the public GHCR images in this guide usable. It removes the
 GKE-specific image credential provider flags and hostPath mounts. For private
 Actor registries, add the correct credential-provider configuration for your
 cluster to the `atelet` DaemonSet.
+
+The bundled PostgreSQL requests a **500 GiB PVC**, 2 CPUs and 1 GiB memory.
+The two workers request another 16 GiB memory and 2 CPUs. Check available
+capacity and the default StorageClass before proceeding. For a small test
+installation, change `storage: 500Gi` in
+`substrate/manifests/ate-install/postgres/postgres.yaml` before the first deploy;
+the installer has a StorageClass flag but no volume-size flag. Existing PVCs
+cannot be shrunk. gVisor is supplied through Substrate's SandboxConfig assets;
+this path does not require a Kubernetes `RuntimeClass` named `gvisor`.
+
+If `podcertificate-controller-system` already serves another application,
+preserve its signer pools, trust bundles and controller during installation
+and cleanup. Do not use the upstream whole-system delete command in that case.
 
 Create the Substrate namespace and operator identity before you add storage
 settings or install the control plane:
@@ -145,6 +166,7 @@ export ATE_CLIENT_SERVICE_ACCOUNT=ate-operator
 go run ./cmd/ate-setup \
   --image-repo ghcr.io/agent-substrate/substrate \
   --image-tag v1.0.0 \
+  --rollout-timeout=5m \
   --credential-provider='{"enabled":false}' \
   --sandbox-classes=gvisor \
   --ateapi-authz-bootstrap-owners=system:serviceaccount:ate-system:ate-operator \
@@ -168,10 +190,27 @@ kubectl -n ate-system rollout status daemonset/atelet
 kubectl get sandboxconfigs
 ```
 
-Some generic clusters use a private certificate for Kubernetes OIDC discovery.
-If ate-api-server rejects ServiceAccount tokens, configure the Kubernetes JWT
-provider in `ate-api-authentication` with the cluster CA and a discovery token.
-See the [Substrate authentication guide](https://github.com/agent-substrate/substrate/blob/v1.0.0/docs/guides/authentication.md).
+Before creating API resources, check authenticated access:
+
+```sh
+kubectl ate get atespaces
+```
+
+On a cluster whose Kubernetes issuer uses a private CA or authenticated discovery
+(including the tested Talos cluster), a Ready API server can still reject this
+call with `Unauthenticated: invalid bearer token`. Configure the Kubernetes JWT
+provider with the existing projected Kubernetes CA and token, then restart the
+API server. Python 3 and PyYAML are required for this helper:
+
+```sh
+python3 "$GUIDE_DIR/scripts/configure-kubernetes-jwt.py" --context "$KUBECTL_CONTEXT"
+kubectl ate get atespaces
+```
+
+The helper preserves other providers and keeps TLS verification enabled. It
+references `/var/run/secrets/kubernetes.io/serviceaccount/{ca.crt,token}`; it
+does not copy a token into a ConfigMap. See the
+[authentication guide](https://github.com/agent-substrate/substrate/blob/v1.0.0/docs/guides/authentication.md).
 
 ## 4. Deploy the n8n WorkerPool and ActorTemplate
 
@@ -206,6 +245,12 @@ port. It grants only `NET_BIND_SERVICE` to bind that port.
 The WorkerPool namespace is labeled `privileged` because Substrate workers need
 hostPath access. Do not run untrusted workloads in this namespace.
 
+Pod readiness does not prove both workers registered. Run `kubectl ate get workers`
+and check both are active. The first template build also downloads the Actor
+image into atelet's separate cache; a cached Kubernetes image does not skip it.
+On the tested cluster this took about four minutes. Inspect atelet logs and
+repeat the template query until `GOLDEN TAG` appears.
+
 ## 5. Install the custom n8n image
 
 The n8n image includes the v1 Substrate client. The example manifest projects a
@@ -217,7 +262,6 @@ policy and patch files. Create the default-policy ConfigMap before installing
 n8n:
 
 ```sh
-export GUIDE_DIR='/path/to/n8n-substrate-sandbox-install'
 kubectl create namespace n8n-app --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n n8n-app create configmap n8n-substrate-default-egress \
   --from-file=default.json="$GUIDE_DIR/substrate-default-egress.json" \
@@ -225,20 +269,31 @@ kubectl -n n8n-app create configmap n8n-substrate-default-egress \
 ```
 
 ```sh
-export N8N_IMAGE='<digest-pinned-current-n8n-build>'
+export N8N_IMAGE='ghcr.io/jseguillon/n8n@sha256:8205a2e0fb5e37e84d0cd7b54e5f21b04e38a4e1009e48f89f103de08a7c6a4c'
 export N8N_HOST='<n8n-hostname>'
 export N8N_PROTOCOL='https'
 envsubst '${N8N_IMAGE} ${N8N_HOST} ${N8N_PROTOCOL}' \
   < docs/examples/n8n-app-v1.yaml.tmpl \
   | kubectl apply -f -
 kubectl -n n8n-app patch deployment n8n --type=strategic \
+  --patch-file "$GUIDE_DIR/n8n-storage.patch.yaml"
+kubectl -n n8n-app patch deployment n8n --type=strategic \
   --patch-file "$GUIDE_DIR/n8n-egress-policy.patch.yaml"
 kubectl -n n8n-app rollout status deployment/n8n --timeout=5m
 ```
 
+The storage patch is required on provisioners that create root-owned volumes
+(tested with Longhorn). Without `fsGroup: 1000`, n8n exits with
+`EACCES: permission denied, open '/home/node/.n8n/config'`. It also uses Recreate
+for the single SQLite/RWO instance and pins these amd64-only images to amd64.
+
 The example creates a ClusterIP Service. Expose it through your ingress, or use
 `kubectl -n n8n-app port-forward svc/n8n 5678:5678` for local testing. Set
 `N8N_HOST` and `N8N_PROTOCOL` to match the URL you use.
+
+For a loopback-only HTTP port-forward test, set `N8N_HOST=localhost` and
+`N8N_PROTOCOL=http` before rendering, and set `N8N_SECURE_COOKIE=false` on the
+deployment. Use secure cookies with HTTPS for externally accessible installs.
 
 The provider stays unavailable until PostHog flag `140_substrate_sandbox` is
 enabled for the user. Create the flag disabled in Staging and Production before
@@ -352,3 +407,52 @@ existing policy.
   image-credential paths. Configure your cluster's image credential provider
   before using private Actor images. The images in this guide are public GHCR
   references.
+
+## 7. Repeatable sandbox smoke test
+
+After normal n8n owner setup, use the settings UI's sandbox verification, or
+call authenticated `POST /rest/assistant/settings/verify/sandbox` with
+`{"provider":"substrate"}`. Session requests require both the login cookie and
+the browser's `browser-id` header. A 401 here does not prove ATE failed.
+
+The following independent test checks UID, HTTPS egress and snapshot restoration
+through the n8n pod's real router identity. The name `guide-smoke` must be unused:
+
+```sh
+kubectl ate create actor guide-smoke -a n8n-sandboxes --template n8n-sandbox
+kubectl ate create egress-policy guide-smoke -a n8n-sandboxes \
+  -f "$GUIDE_DIR/substrate-default-egress.json"
+kubectl ate resume actor guide-smoke -a n8n-sandboxes
+kubectl -n n8n-app exec -i deployment/n8n -- node - < "$GUIDE_DIR/tests/router-smoke.cjs"
+kubectl ate suspend actor guide-smoke -a n8n-sandboxes --mode=sync
+kubectl ate resume actor guide-smoke -a n8n-sandboxes
+kubectl -n n8n-app exec -i deployment/n8n -- env SMOKE_RESTORE=true node - \
+  < "$GUIDE_DIR/tests/router-smoke.cjs"
+kubectl ate delete actor guide-smoke -a n8n-sandboxes
+```
+
+See [VALIDATION.md](VALIDATION.md) for observed results and limits.
+
+## 8. Remove a disposable installation
+
+For the fixed namespaces and resource names used in this guide, the helper
+removes workers while their controller can release SandboxConfig protection,
+then namespaces, dedicated RBAC, admission policy and CRDs. It keeps the
+shared podcertificate controller, its trust bundles, object storage and
+node-local caches. It is intended for a dedicated guide test install, with no
+other WorkerPools or SandboxConfigs. Inspect existing resources first.
+
+**This deletes the n8n and ATE PVCs and data when their PV reclaim policy is
+Delete.** Back up data or set those PVs to Retain before using it on an install
+you need to keep. Do not run it on another Substrate user's installation.
+
+```sh
+python3 "$GUIDE_DIR/scripts/remove-test-install.py" \
+  --context "$KUBECTL_CONTEXT" --delete-test-data
+kubectl get ns ate-system n8n-sandboxes n8n-app --ignore-not-found
+```
+
+If n8n was installed with Helm, uninstall that release before running this
+helper. An upstream `ate-setup delete ate-system` also deletes the certificate
+controller and its trust bundles; use it only when no other application uses
+those signers.
