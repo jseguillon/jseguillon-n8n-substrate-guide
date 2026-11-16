@@ -1,0 +1,103 @@
+# 8gears n8n chart 2.1.1. ATE is installed separately.
+fullnameOverride: n8n
+image:
+  repository: ghcr.io/jseguillon/n8n
+  tag: 2.48.0@sha256:8205a2e0fb5e37e84d0cd7b54e5f21b04e38a4e1009e48f89f103de08a7c6a4c
+main:
+  replicaCount: 1
+  serviceAccount:
+    create: true
+    name: n8n
+  deploymentStrategy:
+    type: Recreate
+  persistence:
+    enabled: true
+    type: dynamic
+    size: 2Gi
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  service:
+    port: 5678
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  extraEnv:
+    N8N_HOST:
+      value: localhost
+    N8N_PROTOCOL:
+      value: http
+    N8N_PORT:
+      value: "5678"
+    N8N_LISTEN_ADDRESS:
+      value: 0.0.0.0
+    N8N_INSTANCE_AI_SANDBOX_ENABLED:
+      value: "true"
+    N8N_INSTANCE_AI_SANDBOX_PROVIDER:
+      value: substrate
+    SUBSTRATE_API_ENDPOINT:
+      value: api.ate-system.svc:443
+    SUBSTRATE_ROUTER_URL:
+      value: https://atenet-router.ate-system.svc:443
+    SUBSTRATE_ATESPACE:
+      value: n8n-sandboxes
+    SUBSTRATE_ACTOR_TEMPLATE:
+      value: n8n-sandbox
+    SUBSTRATE_TOKEN_FILE:
+      value: /run/substrate/token
+    SUBSTRATE_CA_FILE:
+      value: /run/substrate/ca.crt
+    SUBSTRATE_SERVER_NAME:
+      value: api.ate-system.svc
+    SUBSTRATE_ROUTER_CREDENTIAL_FILE:
+      value: /run/substrate-router/credential-bundle.pem
+    SUBSTRATE_EGRESS_POLICY_FILE:
+      value: /run/substrate-egress/default.json
+  extraVolumeMounts:
+  - name: substrate-auth
+    mountPath: /run/substrate
+    readOnly: true
+  - name: substrate-router-identity
+    mountPath: /run/substrate-router
+    readOnly: true
+  - name: substrate-default-egress
+    mountPath: /run/substrate-egress
+    readOnly: true
+  extraVolumes:
+  - name: substrate-auth
+    projected:
+      sources:
+      - serviceAccountToken:
+          audience: api.ate-system.svc
+          expirationSeconds: 3600
+          path: token
+      - clusterTrustBundle:
+          signerName: servicedns.podcert.ate.dev/identity
+          labelSelector:
+            matchLabels:
+              podcert.ate.dev/canarying: live
+          path: ca.crt
+  - name: substrate-router-identity
+    projected:
+      sources:
+      - podCertificate:
+          signerName: podidentity.podcert.ate.dev/identity
+          keyType: ECDSAP256
+          credentialBundlePath: credential-bundle.pem
+  - name: substrate-default-egress
+    configMap:
+      name: n8n-substrate-default-egress

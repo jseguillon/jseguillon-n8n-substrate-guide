@@ -35,3 +35,23 @@ telemetry export warnings; an observability installation is not included.
 An LLM-driven Assistant conversation has not been tested. The checks above
 exercise sandbox plumbing through the actual n8n verification endpoint and a
 separate Actor; they do not establish model tool-selection behavior.
+
+## Helm alternative, 2026-11-16
+
+The installer deployment was removed, including its new test PVCs, WorkerPool,
+CRDs and admission policy. The shared signer and pre-existing retained PV stayed
+intact. ATE was then freshly installed with a distinct snapshot prefix.
+
+The existing 8gears n8n chart 2.1.1 rendered successfully with `helm/n8n-values.yaml`
+and `helm/test-values.yaml`. `helm upgrade --install --wait` and `helm test`
+passed on the remote cluster. The deployed image matched the guide's custom
+n8n digest, not the chart's default appVersion.
+
+Normal owner setup/login and authenticated n8n sandbox verification returned
+HTTP 200 with `ok: true`. The same router smoke test passed UID 1000, HTTPS
+egress and file preservation across synchronous suspend/resume. Restoration
+landed on a different worker, confirming it was not just a running process
+reading its unchanged local directory. The smoke Actor was deleted afterwards.
+
+Helm coverage is n8n only. No Substrate v1.0.0 Helm chart was introduced, and
+the sandbox-service REST/runner chart was not substituted for ATE.

@@ -4,6 +4,12 @@ This guide connects a custom n8n build to Agent Substrate v1.0 on Kubernetes.
 It does not depend on Kind or Talos. It uses gVisor workers, a Substrate
 ActorTemplate, and the native n8n Substrate client.
 
+Installation paths:
+
+- Sections 1–6: Substrate installer and plain n8n manifests.
+- [Helm alternative](#helm-alternative): the same ATE installation plus an
+  existing community n8n chart, with tested Substrate values.
+
 ## Published images
 
 | Image | Digest-pinned reference | Platform |
@@ -456,3 +462,53 @@ If n8n was installed with Helm, uninstall that release before running this
 helper. An upstream `ate-setup delete ate-system` also deletes the certificate
 controller and its trust bundles; use it only when no other application uses
 those signers.
+
+## Helm alternative
+
+Substrate v1.0.0 does not ship a Helm chart. Use sections 1–4 for ATE, workers
+and API resources, including the generic/S3 patches and JWT discovery fix.
+There is no claim that Helm manages ATE here.
+
+For n8n, the existing community [8gears chart](https://github.com/8gears/n8n-helm-chart)
+supports the projected identities and extra environment/volumes needed by this
+provider. Chart **2.1.1** was tested; its OCI digest was
+`sha256:ac5e38f96b91bb39539a0e1647d5f390b8aadf6c03f706e61acfd783b03a6217`.
+The chart's default app version is overridden with the guide's custom
+digest-pinned n8n 2.48.0 image. Do not install the sandbox-service chart from the
+sandbox repository: it deploys the REST API/runner service, not native ATE.
+
+Replace section 5 with these commands. Do not apply the plain n8n manifest to
+the same namespace/release. Start after removing any earlier guide install:
+
+```sh
+kubectl create namespace n8n-app --dry-run=client -o yaml | kubectl apply -f -
+kubectl label namespace n8n-app ate.dev/api-access=true --overwrite
+kubectl -n n8n-app create configmap n8n-substrate-default-egress \
+  --from-file=default.json="$GUIDE_DIR/substrate-default-egress.json" \
+  --dry-run=client -o yaml | kubectl apply -f -
+helm template n8n oci://8gears.container-registry.com/library/n8n \
+  --version 2.1.1 --namespace n8n-app \
+  -f "$GUIDE_DIR/helm/n8n-values.yaml" -f "$GUIDE_DIR/helm/test-values.yaml"
+helm upgrade --install n8n oci://8gears.container-registry.com/library/n8n \
+  --version 2.1.1 --kube-context "$KUBECTL_CONTEXT" --namespace n8n-app \
+  -f "$GUIDE_DIR/helm/n8n-values.yaml" -f "$GUIDE_DIR/helm/test-values.yaml" \
+  --wait --timeout 5m
+helm test n8n --kube-context "$KUBECTL_CONTEXT" --namespace n8n-app --timeout 2m
+kubectl -n n8n-app port-forward svc/n8n 5678:5678
+```
+
+These are loopback HTTP test values. For an externally reachable installation,
+omit `test-values.yaml`, override `main.extraEnv.N8N_HOST.value` and
+`main.extraEnv.N8N_PROTOCOL.value` for your HTTPS endpoint, configure ingress/TLS
+and enrol users through PostHog. The base values keep the ServiceAccount named
+`n8n`, matching both the ATE access policy and router SPIFFE allowlist.
+
+Complete owner setup and repeat sections 6–7. `helm test` checks only Service
+reachability; it does not check ATE. After testing, remove the Helm release
+and then the remaining ATE test installation:
+
+```sh
+helm uninstall n8n --kube-context "$KUBECTL_CONTEXT" --namespace n8n-app --wait
+python3 "$GUIDE_DIR/scripts/remove-test-install.py" \
+  --context "$KUBECTL_CONTEXT" --delete-test-data
+```

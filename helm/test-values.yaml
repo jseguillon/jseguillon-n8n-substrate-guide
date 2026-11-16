@@ -1,0 +1,7 @@
+# Development only: loopback HTTP and explicit feature-flag override.
+main:
+  extraEnv:
+    N8N_SECURE_COOKIE:
+      value: "false"
+    N8N_SUBSTRATE_SANDBOX_ENABLED:
+      value: "true"
