@@ -25,13 +25,29 @@ online guide and the checked-out revision before preparing deployment commands.
 Collect and confirm these choices before auditing the environment. Reuse answers
 the user already supplied; ask follow-up questions for missing or ambiguous details.
 
+When the harness provides an interactive question tool (such as `question`),
+use it to collect choices, resolve ambiguities, and obtain explicit plan approval.
+Ask in small groups and make follow-up questions conditional on previous answers,
+rather than presenting one large inline questionnaire. Use inline questions only
+when no interactive question tool is available. A dismissed question is not an
+answer or approval.
+
 1. **Where should n8n run?** Local Docker or a Kubernetes cluster?
 2. **Which Kubernetes cluster should host Agent Substrate (ATE)?** ATE must run
    on Kubernetes, including when n8n runs in local Docker.
    - Reuse an existing cluster, or deploy a new dedicated cluster for this POC?
+   - **Existing cluster means existing Kubernetes infrastructure, not an existing
+     ATE installation.** This is a fresh ATE installation unless the user
+     explicitly requests reusing an existing ATE deployment. Keep cluster
+     provisioning and application installation status separate in questions
+     and answer summaries.
    - For an existing cluster, ask for its distribution/provider and exact
      `kubectl` context. For a new cluster, ask where to provision it, the desired
      distribution/provider, and the available compute and storage resources.
+   - If the user selects an existing cluster and then says ATE is “not deployed
+     already,” retain the existing-cluster choice and record that ATE needs a
+     fresh installation. Ask only for missing cluster details; do not make the
+     user choose again whether Kubernetes exists solely because ATE is absent.
 3. **If n8n runs in Docker, which Docker environment should be used?**
    - Reuse an existing local Docker Engine/context, or set up a dedicated Docker
      environment for the POC? Clarify whether dedicated means an isolated Compose
@@ -62,6 +78,20 @@ the user already supplied; ask follow-up questions for missing or ambiguous deta
 7. **What resources should this POC use?** Confirm namespaces/project names,
    application storage, resource budget, and any network or access constraints. Ask for secret
    references or protected files rather than credentials in chat.
+8. **Which deployment method does the user prefer where applicable: Helm,
+   Kustomize, or plain manifests/installer?** Ask explicitly rather than selecting
+   a method implicitly, and explain which components each supported path manages.
+   - For Kubernetes n8n, the guide supports a Helm alternative, a Kustomize path,
+     and plain manifests.
+   - Substrate v1.0.0 has no Helm chart in this guide. The Helm alternative manages
+     n8n only and uses the Substrate installer for ATE. The Kustomize path manages
+     ATE and n8n workloads but still requires signing/database/API bootstrap steps.
+   - Ask separately for other Kubernetes components, such as a new object store,
+     when more than one supported deployment method is available. For Docker n8n,
+     Helm/Kustomize do not apply to n8n itself.
+   - Confirm the scope of the selected method. If the requested combination is
+     unsupported or undocumented, explain the gap and resolve it with the user
+     before preparing deployment commands.
 
 Summarize the answers and resolve open choices with the user. Do not infer a
 deployment target from whichever Docker or Kubernetes context happens to be active.
@@ -75,7 +105,8 @@ clusters, install tools, or modify workloads during this audit.
 
 Check at least:
 
-- Available tools and versions required by the selected guide installation path.
+- Available tools and versions required by the selected guide installation path
+  and the user's deployment-method choices, including Helm or Kustomize where used.
 - Exact Kubernetes and Docker contexts, connectivity, and permissions.
 - Kubernetes version and certificate API feature support, node architecture,
   gVisor/hostPath compatibility, and required Pod Security settings.
@@ -108,7 +139,8 @@ Prepare a concrete plan based on the confirmed answers and audit. Include:
 
 - The target hosts, explicit contexts, namespaces, and Docker project if used.
 - Infrastructure to provision versus existing resources to reuse.
-- The chosen installation path, pinned versions, and compatibility changes.
+- The user-selected deployment method and its scope for each component, chosen
+  installation path, pinned versions, and compatibility changes.
 - Deployment steps for storage, ATE, n8n, credentials, and network connectivity.
 - The selected snapshot backend and any new object-store deployment, including
   the user-selected S3 implementation (RustFS or another), pinned version,
