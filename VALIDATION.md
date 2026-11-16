@@ -55,3 +55,46 @@ reading its unchanged local directory. The smoke Actor was deleted afterwards.
 
 Helm coverage is n8n only. No Substrate v1.0.0 Helm chart was introduced, and
 the sandbox-service REST/runner chart was not substituted for ATE.
+
+## Kustomize alternative, 2026-11-16
+
+The Helm release was uninstalled, then the ATE/n8n namespaces, test PVCs,
+dedicated RBAC, CRDs and admission policy were removed again. The final install
+used the staged `kustomize/` overlays and a new snapshot prefix. ATE workloads,
+PostgreSQL, workers and n8n were applied with `kubectl apply -k`; no full-system
+installer deployment was used. Signing/config generation used `ate-setup create`,
+and database identities used upstream `pkg/postgressetup/setup.sql`.
+
+During testing, raw upstream manifests started ateapi without any bootstrap
+owner. Its log reported `--authz-bootstrap-owners must list at least one
+principal`. The system overlay now explicitly sets the operator identity. It
+also supplies the router SPIFFE allowlist and IDP issuer, which the full
+installer normally adds at render time. Namespace labels retain privileged
+PodSecurity for atelet. These are required adaptations, not just image changes.
+
+Passed:
+
+- All seven Kustomize stages render. ATE workload images have concrete digests;
+  no unresolved `ko://` images remain.
+- Server-side dry runs for the system and n8n test overlays.
+- PostgreSQL ready with a fresh 10 GiB Longhorn claim; roles initialized.
+- ATE API 2/2, IDP 2/2, controller/router/egress 1/1, atelet 1/1.
+- Both workers ready and registered active; golden ActorTemplate ready.
+- n8n ready with a fresh 2 GiB claim, non-root security context and projected
+  token, router identity, CA and operator egress policy.
+- Normal login and n8n sandbox verification: HTTP 200, `ok: true`.
+- Router smoke test: UID 1000, HTTPS 200, successful synchronous suspend and
+  file preservation after resume. The disposable Actor was deleted afterwards.
+- Re-staging and `kubectl diff -k` for both system and n8n returned no changes.
+- Bootstrap helper re-run preserved all existing Secrets/configs.
+
+Final state: the Kustomize installation remains running. No n8n Helm release
+remains. The prior retained 500 GiB PV is still Released/Retain and was never
+rebound. The shared certificate controller and kagent remain healthy. Local
+Docker applications were not changed. Snapshot storage and host caches were
+not purged between installs; each install used a distinct snapshot prefix.
+
+After testing, `n8n user-management:reset` removed the disposable test owner,
+and n8n was restarted. `/rest/settings` confirms owner setup is required, so a
+new operator can complete normal onboarding. No test password or session is
+included in this repository. No LLM-driven conversation was tested.

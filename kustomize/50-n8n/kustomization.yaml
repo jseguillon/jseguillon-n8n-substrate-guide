@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- n8n.yaml
+configMapGenerator:
+- name: n8n-substrate-default-egress
+  namespace: n8n-app
+  files:
+  - default.json=substrate-default-egress.json
+generatorOptions:
+  disableNameSuffixHash: true
+patches:
+- target:
+    kind: Deployment
+    name: n8n
+  path: storage.patch.yaml
+- target:
+    kind: Deployment
+    name: n8n
+  path: egress.patch.yaml

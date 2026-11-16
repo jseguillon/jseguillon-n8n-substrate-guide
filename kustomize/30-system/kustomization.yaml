@@ -1,0 +1,72 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ate-api-server.yaml
+- ate-idp-server.yaml
+- ate-controller.yaml
+- atelet.yaml
+- atenet-router.yaml
+- atenet-egress.yaml
+- ate-otel-config.yaml
+- ate-system-networkpolicies.yaml
+- sandboxconfig-gvisor.yaml
+images:
+- name: ko://go.ate.dev/substrate/cmd/ateapi
+  newName: ghcr.io/agent-substrate/substrate/ateapi
+  digest: sha256:2f1ee444b126b6e3620045b61d2a87507fb0f889da0249656c474ab59dc2beaf
+- name: ko://go.ate.dev/substrate/cmd/atecontroller
+  newName: ghcr.io/agent-substrate/substrate/atecontroller
+  digest: sha256:44b3a127048e1da8c15dff35f65defe73f4e54ebb985bc020aa9bb0e6eb029b2
+- name: ko://go.ate.dev/substrate/cmd/ate-idp-server
+  newName: ghcr.io/agent-substrate/substrate/ate-idp-server
+  digest: sha256:9553c0e60a8ad8bbb1c54c59e59cf0d33a338bf4f883b6f806610dc407f49f7c
+- name: ko://go.ate.dev/substrate/cmd/atelet
+  newName: ghcr.io/agent-substrate/substrate/atelet
+  digest: sha256:79abc69f982392adbcbc3332cd8191cf74ac3cd1f4a43c44e9c8a3ce16488b6e
+- name: ko://go.ate.dev/substrate/cmd/atenet
+  newName: ghcr.io/agent-substrate/substrate/atenet
+  digest: sha256:04f7d93dc3fb3deda688137077226c12ce2da41cd4753adff708e3737dc59e20
+- name: ko://go.ate.dev/substrate/cmd/objectstore-plugin
+  newName: ghcr.io/agent-substrate/substrate/objectstore-plugin
+  digest: sha256:485cf92b31fed761c53f478d17ed69bf552a2cd8e8cf3b24b98a3e06789ee274
+- name: envoy-dataplane
+  newName: ghcr.io/agent-substrate/substrate/envoy-dataplane
+  digest: sha256:fc8e4c3ee9060a01153e4d4af571f3db294e60d536422e8a8c2996fa4a72bf8b
+patches:
+- target:
+    kind: Deployment
+    name: ate-api-server
+  patch: |-
+    - op: test
+      path: /spec/template/spec/containers/0/name
+      value: ate-api-server
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --authz-bootstrap-owners=system:serviceaccount:ate-system:ate-operator
+- target:
+    kind: Namespace
+    name: ate-system
+  patch: |-
+    apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: ate-system
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+- target:
+    kind: Deployment
+    name: atenet-router
+  patch: |-
+    - op: test
+      path: /spec/template/spec/containers/0/name
+      value: atenet-router
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/n8n-app/sa/n8n
+- target:
+    kind: Deployment
+    name: ate-idp-server
+  patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --issuer=https://idp.ate-system.svc

@@ -9,6 +9,8 @@ Installation paths:
 - Sections 1–6: Substrate installer and plain n8n manifests.
 - [Helm alternative](#helm-alternative): the same ATE installation plus an
   existing community n8n chart, with tested Substrate values.
+- [Kustomize alternative](#kustomize-alternative): staged, digest-pinned ATE
+  and n8n manifests with explicit signing/database/API bootstrap steps.
 
 ## Published images
 
@@ -512,3 +514,160 @@ helm uninstall n8n --kube-context "$KUBECTL_CONTEXT" --namespace n8n-app --wait
 python3 "$GUIDE_DIR/scripts/remove-test-install.py" \
   --context "$KUBECTL_CONTEXT" --delete-test-data
 ```
+
+## Kustomize alternative
+
+This path installs ATE and n8n workloads with `kubectl apply -k`. The overlays
+support the S3-compatible backend, Envoy and gVisor. It still uses `ate-setup
+create` for generated signing material/configuration and `kubectl ate` for API
+resources. ActorTemplates and access policies are not Kubernetes CRDs and
+cannot be applied with `kubectl apply -k`. No full `ate-setup deploy ate-system`
+or Helm installation is used for these workloads.
+
+Start with a fresh guide installation after section 8 cleanup. Use the clones
+and prerequisites from sections 1–2, including both generic Kubernetes and S3
+patches. The staging helper checks these exact revisions:
+
+- Substrate: `b34fbee742906494b5eb4f1f36987176bf8770a4` (v1.0.0).
+- Sandbox templates: `564cbf679dbc29a1081a2085fd92779f53527a04`.
+
+If cloning a moving sandbox branch gives a different revision, create a local
+branch at the documented commit or review and update the helper after testing.
+Do not silently use changed manifests with these patches. Python 3 and PyYAML
+are required. The commands below start in the directory containing all clones:
+
+```sh
+export SUBSTRATE_DIR="$PWD/substrate"
+export SANDBOX_DIR="$PWD/n8n-sandbox-service-substrate"
+# GUIDE_DIR and KUBECTL_CONTEXT are already exported in section 1.
+python3 "$GUIDE_DIR/scripts/prepare-kustomize.py" \
+  --substrate "$SUBSTRATE_DIR" --sandbox "$SANDBOX_DIR"
+export KUSTOMIZE_DIR="$GUIDE_DIR/.build/kustomize"
+kubectl kustomize "$KUSTOMIZE_DIR/30-system"
+kubectl kustomize "$KUSTOMIZE_DIR/60-n8n-test"
+```
+
+The helper stages only source templates and guide patches under ignored
+`.build/kustomize`; it never reads cluster Secrets. The committed Kustomize
+files select resources, pin all ATE workload images by digest, configure router
+and bootstrap-owner flags, and size the test PostgreSQL PVC to **10 GiB**.
+Review and adjust that size in `kustomize/20-postgres/kustomization.yaml` before
+the first apply if necessary. Run the helper again after changing overlays.
+
+### A. Namespaces, CRDs and signing prerequisites
+
+```sh
+kubectl --context "$KUBECTL_CONTEXT" apply -k "$KUSTOMIZE_DIR/00-namespaces"
+kubectl --context "$KUBECTL_CONTEXT" apply -k "$KUSTOMIZE_DIR/10-crds"
+kubectl --context "$KUBECTL_CONTEXT" wait --for=condition=Established \
+  crd/workerpools.ate.dev crd/sandboxconfigs.ate.dev crd/csidriverconfigs.ate.dev \
+  --timeout=60s
+```
+
+Keep an existing healthy podcertificate controller and its signer Secrets. If
+there is no controller yet, deploy it once from the patched Substrate checkout:
+
+```sh
+cd "$SUBSTRATE_DIR"
+go build -o "$SUBSTRATE_DIR/bin/ate-setup" ./cmd/ate-setup
+go install ./cmd/kubectl-ate
+export PATH="$(go env GOPATH)/bin:$PATH"
+# Only when the certificate controller is absent:
+# bin/ate-setup --context "$KUBECTL_CONTEXT" \
+#   --image-repo ghcr.io/agent-substrate/substrate --image-tag v1.0.0 \
+#   --rollout-timeout=5m deploy podcertificate-controller
+kubectl --context "$KUBECTL_CONTEXT" -n podcertificate-controller-system \
+  rollout status deployment/podcertificate-controller --timeout=5m
+kubectl --context "$KUBECTL_CONTEXT" get clustertrustbundles
+```
+
+Set `SNAPSHOT_LOCATION` to the S3 bucket/prefix created in section 2. Create
+`substrate-s3-config` and `substrate-s3-credentials` as shown there, after the
+namespace exists. Keep credentials in external protected files. Generate the
+remaining prerequisites directly in Kubernetes, preserving existing ones:
+
+```sh
+python3 "$GUIDE_DIR/scripts/bootstrap-kustomize.py" \
+  --context "$KUBECTL_CONTEXT" --substrate "$SUBSTRATE_DIR" \
+  --ate-setup "$SUBSTRATE_DIR/bin/ate-setup" \
+  --snapshot-location "$SNAPSHOT_LOCATION"
+```
+
+This creates actor JWT/CA pools, the derived actor trust Secret, the egress CA
+pool and API configuration. It does not export private keys into `.build`.
+It skips existing resources; to deliberately change the snapshot prefix on an
+existing install, run the installer's `create api-server-env-vars` with the new
+settings and review the resulting rollout. This helper is not a rotation tool.
+
+### B. PostgreSQL and ATE
+
+```sh
+kubectl --context "$KUBECTL_CONTEXT" apply -k "$KUSTOMIZE_DIR/20-postgres"
+kubectl --context "$KUBECTL_CONTEXT" -n ate-system \
+  rollout status statefulset/postgres --timeout=5m
+kubectl --context "$KUBECTL_CONTEXT" -n ate-system exec -i postgres-0 -c postgres -- \
+  psql --no-psqlrc --single-transaction --set=ON_ERROR_STOP=1 \
+  --username=postgres --dbname=atepg \
+  --set=substrate_schema=substrate \
+  --set=substrate_owner_role=substrate_owner \
+  --set=substrate_owner_user=substrate_owner_user --set=substrate_owner_password= \
+  --set=substrate_readwrite_role=substrate_readwrite \
+  --set=substrate_readwrite_user=substrate_readwrite_user --set=substrate_readwrite_password= \
+  < "$SUBSTRATE_DIR/pkg/postgressetup/setup.sql"
+kubectl --context "$KUBECTL_CONTEXT" apply --dry-run=server -k "$KUSTOMIZE_DIR/30-system"
+kubectl --context "$KUBECTL_CONTEXT" apply -k "$KUSTOMIZE_DIR/30-system"
+kubectl --context "$KUBECTL_CONTEXT" -n ate-system \
+  rollout status deployment/ate-api-server --timeout=5m
+kubectl --context "$KUBECTL_CONTEXT" -n ate-system \
+  rollout status deployment/ate-idp-server --timeout=5m
+kubectl --context "$KUBECTL_CONTEXT" -n ate-system \
+  rollout status deployment/ate-controller --timeout=5m
+kubectl --context "$KUBECTL_CONTEXT" -n ate-system \
+  rollout status deployment/atenet-router --timeout=5m
+kubectl --context "$KUBECTL_CONTEXT" -n ate-system \
+  rollout status deployment/atenet-egress --timeout=5m
+kubectl --context "$KUBECTL_CONTEXT" -n ate-system \
+  rollout status daemonset/atelet --timeout=5m
+```
+
+The SQL is the pinned upstream identity bootstrap. It grants the passwordless
+certificate users the required database roles; the API applies its own schema
+migrations. Do not omit it or replace it with a passwordless network login.
+The upstream PostgreSQL manifest restricts remote access to client certificates.
+
+If required by your Kubernetes issuer, run the private OIDC discovery helper
+from section 3. Then verify authenticated API access before deploying workers:
+
+```sh
+python3 "$GUIDE_DIR/scripts/configure-kubernetes-jwt.py" --context "$KUBECTL_CONTEXT"
+export ATE_CLIENT_SERVICE_ACCOUNT=ate-operator
+kubectl ate --context "$KUBECTL_CONTEXT" get atespaces
+kubectl --context "$KUBECTL_CONTEXT" apply -k "$KUSTOMIZE_DIR/40-workers"
+kubectl --context "$KUBECTL_CONTEXT" -n n8n-sandboxes \
+  rollout status deployment/n8n-sandbox --timeout=5m
+kubectl ate --context "$KUBECTL_CONTEXT" get workers
+```
+
+### C. ATE API resources, n8n and verification
+
+Run section 4's `kubectl ate create atespace`, `create access-policy` and
+`create actor-template` commands, using the same pinned sandbox image. Do not
+reapply section 4's WorkerPool template; Kustomize already owns it. Wait for the
+template's golden tag, then install the loopback-only test overlay:
+
+```sh
+kubectl --context "$KUBECTL_CONTEXT" apply --dry-run=server -k "$KUSTOMIZE_DIR/60-n8n-test"
+kubectl --context "$KUBECTL_CONTEXT" apply -k "$KUSTOMIZE_DIR/60-n8n-test"
+kubectl --context "$KUBECTL_CONTEXT" -n n8n-app rollout status deployment/n8n --timeout=5m
+kubectl --context "$KUBECTL_CONTEXT" -n n8n-app port-forward svc/n8n 5678:5678
+```
+
+For HTTPS instead, stage with `--host <hostname> --protocol https`, configure
+ingress/TLS separately, and apply `50-n8n` instead of `60-n8n-test`. That leaves
+secure cookies enabled and uses PostHog enrolment rather than a test override.
+
+Complete normal owner setup, verify the sandbox connection, and repeat section
+7's mTLS/egress/suspend/resume test. Changes to the egress ConfigMap retain its
+fixed name; after regenerating and applying, restart n8n for immediate reload.
+Use section 8 for later removal; delete workers before the ATE controller, not
+an unordered `kubectl delete -k` across all stages. The shared signer stays.

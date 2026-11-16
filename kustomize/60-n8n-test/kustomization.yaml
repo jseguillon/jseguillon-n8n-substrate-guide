@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../50-n8n
+patches:
+- target:
+    kind: Deployment
+    name: n8n
+  patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: n8n
+      namespace: n8n-app
+    spec:
+      template:
+        spec:
+          containers:
+          - name: n8n
+            env:
+            - name: N8N_SUBSTRATE_SANDBOX_ENABLED
+              value: "true"
+            - name: N8N_SECURE_COOKIE
+              value: "false"
